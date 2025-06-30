@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Market Sentiment Analyzer</title>
+    <link rel="stylesheet" href="./static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@2.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📈 Market Sentiment Analyzer from Twitter / News</h1>
+            <p>Real-time news sentiment and stock price correlation</p>
+        </div>
+
+        <div class="controls">
+            <h3><i class="fas fa-sliders-h"></i> Analysis Settings</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="asset">Asset Name</label>
+                    <input type="text" id="asset" placeholder="e.g., Tesla, Bitcoin, Apple" value="Tesla">
+                </div>
+                <div class="form-group">
+                    <label for="symbol">Stock Symbol</label>
+                    <input type="text" id="symbol" placeholder="e.g., TSLA, BTC-USD, AAPL" value="TSLA" autocomplete="off">
+                    <div id="symbol-suggestions" class="suggestions"></div>
+                </div>
+                <div class="form-group">
+                    <label for="days">Days Back</label>
+                    <select id="days">
+                        <option value="3">3 Days</option>
+                        <option value="7" selected>1 Week</option>
+                        <option value="14">2 Weeks</option>
+                        <option value="30">1 Month</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label> </label>
+                    <button class="btn primary" onclick="analyzeMarket()"><i class="fas fa-chart-line"></i> Analyze Market</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="popular-assets-section" class="popular-assets-section" style="display: none;">
+            <h3><i class="fas fa-fire"></i> Popular Assets</h3>
+            <div id="popular-assets-grid" class="popular-assets-grid">
+                <!-- Popular assets will be loaded here by JS -->
+            </div>
+        </div>
+
+        <div id="loading" class="loading">
+            <div class="loading-content">
+                <i class="fas fa-spinner"></i>
+                <p>Analyzing market sentiment and fetching data...</p>
+                <div class="progress-bar"><div class="progress-fill"></div></div>
+            </div>
+        </div>
+
+        <div id="error" class="error"></div>
+
+        <div id="results" class="results">
+            <div class="realtime-price">
+                <div class="price-info">
+                    <span class="price-label">Real-time Quote for <span id="quoteSymbol"></span>:</span>
+                    <span class="current-price" id="quotePrice">$0.00</span>
+                    <span class="price-change" id="quoteChange">
+                        <i class="fas fa-caret-up"></i>
+                        <span id="quoteChangeValue">0.00</span> (<span id="quoteChangePercent">0.00%</span>)
+                    </span>
+                </div>
+                <div class="price-label">As of <span id="quoteDate">N/A</span></div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon"><i class="fas fa-newspaper"></i></div>
+                    <div class="stat-number" id="totalArticles">0</div>
+                    <div class="stat-label">Total Articles</div>
+                </div>
+                <div class="stat-card positive">
+                    <div class="stat-icon positive-text"><i class="fas fa-thumbs-up"></i></div>
+                    <div class="stat-number positive-text" id="positiveCount">0</div>
+                    <div class="stat-label">Positive Sentiment</div>
+                </div>
+                <div class="stat-card negative">
+                    <div class="stat-icon negative-text"><i class="fas fa-thumbs-down"></i></div>
+                    <div class="stat-number negative-text" id="negativeCount">0</div>
+                    <div class="stat-label">Negative Sentiment</div>
+                </div>
+                <div class="stat-card neutral">
+                    <div class="stat-icon neutral-text"><i class="fas fa-meh"></i></div>
+                    <div class="stat-number neutral-text" id="neutralCount">0</div>
+                    <div class="stat-label">Neutral Sentiment</div>
+                </div>
+            </div>
+
+            <div class="charts-section">
+                <div class="chart-container main-chart">
+                    <h4><i class="fas fa-chart-area"></i> Sentiment & Price Correlation</h4>
+                    <div class="chart-wrapper">
+                        <canvas id="combinedChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="insights-section">
+                <h3><i class="fas fa-lightbulb"></i> Key Insights</h3>
+                <ul id="insights-list" class="insights-list">
+                    <li>No insights generated yet.</li>
+                </ul>
+            </div>
+
+            <div class="articles-section">
+                <div class="articles-header">
+                    <h3><i class="fas fa-rss"></i> Recent Articles</h3>
+                    <div class="article-filters">
+                        <button class="filter-btn active" data-filter="all" onclick="filterArticles('all', this)">All</button>
+                        <button class="filter-btn" data-filter="positive" onclick="filterArticles('positive', this)">Positive</button>
+                        <button class="filter-btn" data-filter="negative" onclick="filterArticles('negative', this)">Negative</button>
+                        <button class="filter-btn" data-filter="neutral" onclick="filterArticles('neutral', this)">Neutral</button>
+                    </div>
+                </div>
+                <div id="articles"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let combinedChartInstance;
+        let allArticlesData = []; // Store all articles for filtering
+
+        // --- Core Analysis Function ---
+        async function analyzeMarket() {
+            const asset = document.getElementById('asset').value.trim();
+            const symbol = document.getElementById('symbol').value.trim().toUpperCase();
+            const days = document.getElementById('days').value;
+
+            if (!asset || !symbol) {
+                showError('Please enter both asset name and symbol.');
+                return;
+            }
+
+            showLoading(true);
+            hideError();
+            hideResults();
+
+            try {
+                const response = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ asset: asset, symbol: symbol, days_back: parseInt(days) })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                displayResults(data);
+
+            } catch (error) {
+                console.error('Error:', error);
+                showError(`Failed to analyze market: ${error.message}`);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // --- Display Functions ---
+        function displayResults(data) {
+            // Update statistics
+            document.getElementById('totalArticles').textContent = data.summary.total_articles;
+            document.getElementById('positiveCount').textContent = data.summary.positive_count;
+            document.getElementById('negativeCount').textContent = data.summary.negative_count;
+            document.getElementById('neutralCount').textContent = data.summary.neutral_count;
+
+            // Update Real-time Quote
+            updateRealtimeQuote(data.real_time_quote);
+
+            // Create Combined Chart
+            createCombinedChart(data.daily_sentiment, data.stock_data);
+
+            // Display Insights
+            displayInsights(data.insights);
+
+            // Display Articles
+            allArticlesData = data.sentiment_data; // Store for filtering
+            displayArticles(allArticlesData);
+            resetArticleFilters();
+
+            showResults();
+        }
+
+        function updateRealtimeQuote(quote) {
+            const quoteSection = document.querySelector('.realtime-price');
+            if (Object.keys(quote).length === 0 || quote.price === 0) {
+                quoteSection.style.display = 'none';
+                return;
+            }
+            quoteSection.style.display = 'flex';
+
+            document.getElementById('quoteSymbol').textContent = quote.symbol;
+            document.getElementById('quotePrice').textContent = `$${quote.price.toFixed(2)}`;
+
+            const changeValue = quote.change.toFixed(2);
+            const changePercent = parseFloat(quote.change_percent.replace('%', '')).toFixed(2);
+            
+            const quoteChangeSpan = document.getElementById('quoteChange');
+            const quoteChangeIcon = quoteChangeSpan.querySelector('i');
+            
+            document.getElementById('quoteChangeValue').textContent = changeValue;
+            document.getElementById('quoteChangePercent').textContent = `${changePercent}%`;
+
+            quoteChangeSpan.classList.remove('positive', 'negative');
+            quoteChangeIcon.classList.remove('fa-caret-up', 'fa-caret-down');
+
+            if (quote.change > 0) {
+                quoteChangeSpan.classList.add('positive');
+                quoteChangeIcon.classList.add('fa-caret-up');
+            } else if (quote.change < 0) {
+                quoteChangeSpan.classList.add('negative');
+                quoteChangeIcon.classList.add('fa-caret-down');
+            } else {
+                 // Neutral, could add a neutral class if desired, but base styling might be fine
+                 quoteChangeIcon.classList.add('fa-minus'); // Or a flat line icon
+            }
+
+            document.getElementById('quoteDate').textContent = quote.latest_trading_day;
+        }
+
+        function createCombinedChart(dailySentiment, stockData) {
+            const ctx = document.getElementById('combinedChart').getContext('2d');
+            if (combinedChartInstance) {
+                combinedChartInstance.destroy();
+            }
+
+            // Prepare sentiment data
+            const sentimentLabels = Object.keys(dailySentiment).sort();
+            const sentimentScores = sentimentLabels.map(date => dailySentiment[date].avg_score);
+            const sentimentDataPoints = sentimentLabels.map((date, index) => ({
+                x: date,
+                y: sentimentScores[index]
+            }));
+
+            // Prepare stock data
+            const stockLabels = stockData.map(item => item.date);
+            const stockPrices = stockData.map(item => item.close);
+            const stockDataPoints = stockLabels.map((date, index) => ({
+                x: date,
+                y: stockPrices[index]
+            }));
+            
+            // Combine all unique dates from both datasets for the X-axis
+            const allDates = [...new Set([...sentimentLabels, ...stockLabels])].sort();
+
+            combinedChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: allDates,
+                    datasets: [
+                        {
+                            label: 'Average Sentiment Score',
+                            data: sentimentDataPoints,
+                            borderColor: 'rgb(102, 126, 234)', // Purple-blue gradient color
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            borderWidth: 3,
+                            fill: false, // Don't fill area for sentiment
+                            tension: 0.4,
+                            yAxisID: 'sentimentY',
+                            pointRadius: 4,
+                            pointBackgroundColor: 'rgb(102, 126, 234)',
+                            pointBorderColor: '#fff',
+                            pointHoverRadius: 6
+                        },
+                        {
+                            label: 'Stock Price',
+                            data: stockDataPoints,
+                            borderColor: 'rgb(16, 185, 129)', // Green color for stock price
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            borderWidth: 3,
+                            fill: false, // Don't fill area for price
+                            tension: 0.4,
+                            yAxisID: 'priceY',
+                            pointRadius: 4,
+                            pointBackgroundColor: 'rgb(16, 185, 129)',
+                            pointBorderColor: '#fff',
+                            pointHoverRadius: 6
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                font: {
+                                    size: 14,
+                                    family: 'Inter'
+                                },
+                                color: '#555'
+                            }
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            backgroundColor: 'rgba(0,0,0,0.8)',
+                            titleFont: { size: 16, family: 'Inter', weight: 'bold' },
+                            bodyFont: { size: 14, family: 'Inter' },
+                            padding: 12,
+                            boxPadding: 6,
+                            cornerRadius: 8,
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    if (context.dataset.label === 'Average Sentiment Score') {
+                                        let sentimentText;
+                                        if (context.parsed.y > 0.1) sentimentText = 'Positive';
+                                        else if (context.parsed.y < -0.1) sentimentText = 'Negative';
+                                        else sentimentText = 'Neutral';
+                                        label += `${sentimentText} (${context.parsed.y.toFixed(2)})`;
+                                    } else if (context.dataset.label === 'Stock Price') {
+                                        label += `$${context.parsed.y.toFixed(2)}`;
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'day',
+                                tooltipFormat: 'MMM d, yyyy',
+                                displayFormats: {
+                                    day: 'MMM d'
+                                }
+                            },
+                            title: {
+                                display: true,
+                                text: 'Date',
+                                color: '#555',
+                                font: { size: 14, family: 'Inter', weight: '600' }
+                            },
+                            ticks: {
+                                color: '#777',
+                                font: { family: 'Inter' }
+                            },
+                            grid: {
+                                color: 'rgba(0,0,0,0.05)'
+                            }
+                        },
+                        sentimentY: {
+                            type: 'linear',
+                            position: 'left',
+                            title: {
+                                display: true,
+                                text: 'Sentiment Score',
+                                color: 'rgb(102, 126, 234)',
+                                font: { size: 14, family: 'Inter', weight: '600' }
+                            },
+                            min: -1,
+                            max: 1,
+                            ticks: {
+                                color: 'rgb(102, 126, 234)',
+                                font: { family: 'Inter' },
+                                callback: function(value) {
+                                    if (value > 0.1) return 'Positive';
+                                    if (value < -0.1) return 'Negative';
+                                    return 'Neutral';
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(0,0,0,0.05)'
+                            }
+                        },
+                        priceY: {
+                            type: 'linear',
+                            position: 'right',
+                            title: {
+                                display: true,
+                                text: 'Stock Price ($)',
+                                color: 'rgb(16, 185, 129)',
+                                font: { size: 14, family: 'Inter', weight: '600' }
+                            },
+                            grid: {
+                                drawOnChartArea: false, // Only draw the grid lines for the first y-axis
+                                color: 'rgba(0,0,0,0.05)'
+                            },
+                            ticks: {
+                                color: 'rgb(16, 185, 129)',
+                                font: { family: 'Inter' },
+                                callback: function(value) {
+                                    return `$${value.toFixed(2)}`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function displayInsights(insights) {
+            const insightsList = document.getElementById('insights-list');
+            insightsList.innerHTML = '';
+            if (insights.length === 0) {
+                insightsList.innerHTML = '<li>No specific insights found for this period.</li>';
+                return;
+            }
+            insights.forEach(insight => {
+                const li = document.createElement('li');
+                li.textContent = insight;
+                insightsList.appendChild(li);
+            });
+        }
+
+        function displayArticles(articlesToDisplay) {
+            const container = document.getElementById('articles');
+            container.innerHTML = '';
+
+            if (articlesToDisplay.length === 0) {
+                container.innerHTML = '<p style="text-align: center; color: #666; padding: 30px;">No articles found for this selection.</p>';
+                return;
+            }
+
+            articlesToDisplay.forEach(article => {
+                const articleDiv = document.createElement('div');
+                articleDiv.className = `article-item ${article.sentiment}`;
+                // Changed: Now clicking opens the article URL directly in a new tab
+                articleDiv.onclick = () => window.open(article.url, '_blank');
+                // Add cursor pointer to indicate clickability
+                articleDiv.style.cursor = 'pointer';
+                
+                articleDiv.innerHTML = `
+                    <div class="article-title">${article.title}</div>
+                    <div class="article-meta">
+                        <span>${article.source} • ${new Date(article.date).toLocaleDateString()}</span>
+                        <span class="sentiment-badge ${article.sentiment}">
+                            ${article.sentiment} (${article.score.toFixed(2)})
+                        </span>
+                    </div>
+                `;
+                
+                container.appendChild(articleDiv);
+            });
+        }
+
+        // --- UI State Management ---
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'flex' : 'none';
+            document.querySelector('.progress-fill').style.animation = show ? 'progress 3s ease-in-out infinite' : 'none';
+            // Disable analysis button while loading
+            document.querySelector('.btn.primary').disabled = show;
+        }
+
+        function showResults() {
+            document.getElementById('results').style.display = 'block';
+        }
+
+        function hideResults() {
+            document.getElementById('results').style.display = 'none';
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        function hideError() {
+            document.getElementById('error').style.display = 'none';
+        }
+
+        // --- Article Filtering ---
+        function filterArticles(filterType, button) {
+            // Remove active class from all filter buttons
+            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+            // Add active class to the clicked button
+            button.classList.add('active');
+
+            let filtered = [];
+            if (filterType === 'all') {
+                filtered = allArticlesData;
+            } else {
+                filtered = allArticlesData.filter(article => article.sentiment === filterType);
+            }
+            displayArticles(filtered);
+        }
+
+        function resetArticleFilters() {
+            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelector('.filter-btn[data-filter="all"]').classList.add('active');
+        }
+
+        // --- Symbol Search Auto-completion ---
+        let searchTimeout;
+        const symbolInput = document.getElementById('symbol');
+        const suggestionsDiv = document.getElementById('symbol-suggestions');
+
+        symbolInput.addEventListener('input', function() {
+            clearTimeout(searchTimeout);
+            const keywords = this.value.trim();
+            if (keywords.length < 2) {
+                suggestionsDiv.style.display = 'none';
+                suggestionsDiv.innerHTML = '';
+                return;
+            }
+
+            searchTimeout = setTimeout(async () => {
+                try {
+                    const response = await fetch(`/api/search/${keywords}`);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    const data = await response.json();
+                    displaySymbolSuggestions(data);
+                } catch (error) {
+                    console.error('Error fetching symbol suggestions:', error);
+                    suggestionsDiv.style.display = 'none';
+                }
+            }, 300); // Debounce search
+        });
+
+        function displaySymbolSuggestions(matches) {
+            suggestionsDiv.innerHTML = '';
+            if (matches && matches.length > 0) {
+                matches.forEach(match => {
+                    const item = document.createElement('div');
+                    item.className = 'suggestion-item';
+                    item.innerHTML = `<span class="symbol">${match.symbol}</span> <span class="name">${match.name}</span>`;
+                    item.onclick = () => {
+                        symbolInput.value = match.symbol;
+                        document.getElementById('asset').value = match.name; // Auto-fill asset name
+                        suggestionsDiv.style.display = 'none';
+                    };
+                    suggestionsDiv.appendChild(item);
+                });
+                suggestionsDiv.style.display = 'block';
+            } else {
+                suggestionsDiv.style.display = 'none';
+            }
+        }
+
+        // Hide suggestions when clicking outside
+        document.addEventListener('click', function(event) {
+            if (!symbolInput.contains(event.target) && !suggestionsDiv.contains(event.target)) {
+                suggestionsDiv.style.display = 'none';
+            }
+        });
+
+        // --- Popular Assets Quick Select ---
+        async function loadPopularAssets() {
+            try {
+                const response = await fetch('/api/assets');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const assets = await response.json();
+                const grid = document.getElementById('popular-assets-grid');
+                if (assets && assets.length > 0) {
+                    assets.forEach(asset => {
+                        const button = document.createElement('button');
+                        button.className = 'asset-btn';
+                        button.innerHTML = `<i class="fas fa-arrow-right"></i> ${asset.name} (${asset.symbol})`;
+                        button.onclick = () => {
+                            document.getElementById('asset').value = asset.name;
+                            document.getElementById('symbol').value = asset.symbol;
+                            analyzeMarket();
+                        };
+                        grid.appendChild(button);
+                    });
+                    document.getElementById('popular-assets-section').style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Error loading popular assets:', error);
+                document.getElementById('popular-assets-section').style.display = 'none';
+            }
+        }
+
+        // --- Initial Load ---
+        window.addEventListener('load', function() {
+            // Load popular assets first
+            loadPopularAssets();
+            // Then trigger an initial analysis with default values
+            setTimeout(() => {
+                analyzeMarket();
+            }, 1000); // Give a slight delay for assets to load, and initial animation
+        });
+    </script>
+</body>
+</html>
